@@ -1,0 +1,23 @@
+name: "Reused REST HTTP client keeps the initial macOS/Windows OS system proxy"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  Proxy settings come from connection properties or JVM system properties
+  (`http.proxyHost`, `https.proxyHost`, `java.net.useSystemProxies`) rather
+  than `use_proxy_env`.
+new_driver_behavior: |
+  One driver instance reuses its most recent REST HTTP client across
+  connections with equal TLS, explicit-proxy, proxy-environment-variable, and
+  connect-timeout settings. When a caller opts in with `use_proxy_env=true`
+  and proxy environment variables are unset, the macOS or Windows OS system
+  proxy is read once when the client is built and is not re-read on reused
+  connections. Mid-process OS system proxy changes take effect only when
+  another transport setting changes, the process restarts, or
+  `SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE=true` is set.
+description: |
+  JDBC defaults `use_proxy_env` to false, so default configurations are
+  unaffected. Environment-variable proxy changes still build a new client,
+  and Linux does not query an OS proxy store.

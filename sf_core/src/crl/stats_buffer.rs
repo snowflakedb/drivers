@@ -29,8 +29,9 @@ enum State {
     Discarded,
 }
 
-/// One connection's `client_crl_stats` events. [`super::ConnectionCrl`] clones
-/// share this buffer. A discarded buffer drops every later record.
+/// `client_crl_stats` events of one connection, or of every connection that
+/// shares its client. [`super::ConnectionCrl`] clones share this buffer.
+/// A discarded buffer drops later records until a session attaches.
 #[derive(Clone)]
 pub(crate) struct CrlStatsBuffer {
     state: Arc<Mutex<State>>,
@@ -97,30 +98,32 @@ impl CrlStatsBuffer {
         }
     }
 
-    /// Attaches this connection's session and sends parked events there.
-    /// A later call does not retarget. A discarded buffer sends nothing.
+    /// Sends parked events and later records to this session, replacing any
+    /// earlier session or discard. Only telemetry-enabled connections call
+    /// this, so a shared client's buffer follows the latest of them.
     pub(crate) fn flush_to(&self, telemetry: &SessionTelemetry, telemetry_id: u64) {
-        let pending = {
-            let mut state = self.state.lock_recover();
-            let State::Buffering { pending } = &mut *state else {
-                return;
-            };
-            let pending = std::mem::take(pending);
-            *state = State::Attached {
+        let previous = std::mem::replace(
+            &mut *self.state.lock_recover(),
+            State::Attached {
                 telemetry_id,
                 telemetry: telemetry.clone(),
-            };
-            pending
-        };
-        for stat in pending {
-            push(telemetry, telemetry_id, &stat);
+            },
+        );
+        if let State::Buffering { pending } = previous {
+            for stat in pending {
+                push(telemetry, telemetry_id, &stat);
+            }
         }
     }
 
-    /// Drops parked events and ignores later records. Used when this
-    /// connection's server left `CLIENT_TELEMETRY_ENABLED` off.
+    /// Drops parked events and ignores later records until a session attaches.
+    /// Used when a connection's server left `CLIENT_TELEMETRY_ENABLED` off; a
+    /// buffer already attached to another session stays attached.
     pub(crate) fn discard(&self) {
-        *self.state.lock_recover() = State::Discarded;
+        let mut state = self.state.lock_recover();
+        if !matches!(*state, State::Attached { .. }) {
+            *state = State::Discarded;
+        }
     }
 
     #[cfg(test)]
@@ -261,6 +264,34 @@ mod tests {
         buffer.flush_to(&telemetry, 1);
         assert!(buffer.pending().is_empty());
         assert_eq!(telemetry.buffer_len(1), 0);
+
+        let after_attach = "https://snowflake.com/after-attach.crl";
+        record_sample(&buffer, after_attach);
+        assert_eq!(flushed_message(&telemetry, 1)["crl_url"], after_attach);
+    }
+
+    #[test]
+    fn should_send_later_crl_stats_to_the_latest_attached_session() {
+        let buffer = CrlStatsBuffer::new();
+        let first = disconnected_session_telemetry(1);
+        let second = disconnected_session_telemetry(2);
+        buffer.flush_to(&first, 1);
+        buffer.flush_to(&second, 2);
+        let url = "https://snowflake.com/ca.crl";
+        record_sample(&buffer, url);
+        assert_eq!(first.buffer_len(1), 0);
+        assert_eq!(flushed_message(&second, 2)["crl_url"], url);
+    }
+
+    #[test]
+    fn should_keep_an_attached_buffer_attached_on_discard() {
+        let buffer = CrlStatsBuffer::new();
+        let telemetry = disconnected_session_telemetry(4);
+        buffer.flush_to(&telemetry, 4);
+        buffer.discard();
+        let url = "https://snowflake.com/ca.crl";
+        record_sample(&buffer, url);
+        assert_eq!(flushed_message(&telemetry, 4)["crl_url"], url);
     }
 
     #[test]

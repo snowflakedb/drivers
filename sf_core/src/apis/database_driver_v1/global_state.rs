@@ -23,6 +23,7 @@ use crate::telemetry::platform_detection::{DetectionConfig, PlatformDetector};
 use crate::telemetry::session_telemetry::SessionTelemetry;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::tls::RootStoreProvider;
+use crate::tls::client_slot::ClientSlot;
 use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
 
@@ -269,6 +270,9 @@ pub struct DriverProviders {
     /// When `None`, [`DatabaseDriverV1::with_providers`] reads
     /// [`crate::env_vars::SNOWFLAKE_RUNNING_INSIDE_XP`].
     pub running_inside_xp: Option<bool>,
+    /// When `None`, [`DatabaseDriverV1::with_providers`] reads
+    /// [`crate::env_vars::SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE`].
+    pub disable_rest_client_cache: Option<bool>,
     /// Inject a token cache so a wrapper can store tokens outside the default
     /// keyring. Production code uses `None` and lazily constructs
     /// [`KeyringTokenCache`] on first [`DatabaseDriverV1::token_cache`] call.
@@ -307,6 +311,9 @@ pub struct DatabaseDriverV1 {
     /// CRL manager shared across all connections on this driver instance.
     pub(crate) crl_manager: CrlManager,
     pub(crate) root_store_provider: RootStoreProvider,
+    /// The REST client most recently built by a login without diagnostics,
+    /// reused by a later login whose settings resolve to an equal spec.
+    pub(crate) rest_client_slot: ClientSlot,
     pub(crate) xp_slot: Arc<XpSlot>,
     /// Process-wide (or test-injected) transfer admission scheduler. Default
     /// construction shares [`process_governor`] across all driver roots.
@@ -317,6 +324,12 @@ impl Default for DatabaseDriverV1 {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn http_client_cache_disabled(override_setting: Option<bool>) -> bool {
+    override_setting.unwrap_or_else(|| {
+        crate::utils::env_flag(crate::env_vars::SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE)
+    })
 }
 
 impl DatabaseDriverV1 {
@@ -337,6 +350,13 @@ impl DatabaseDriverV1 {
         });
         crate::xp_backend::registry::install_c_registration_target(Arc::clone(&xp_slot));
         let root_store_provider = providers.root_store_provider.unwrap_or_default();
+        let disable_http_client_cache =
+            http_client_cache_disabled(providers.disable_rest_client_cache);
+        if disable_http_client_cache {
+            tracing::warn!("HTTP client cache disabled");
+        } else {
+            tracing::debug!(disabled = false, "resolved the HTTP client cache setting");
+        }
         Self {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
@@ -359,6 +379,7 @@ impl DatabaseDriverV1 {
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
             crl_manager: providers.crl_manager.unwrap_or_default(),
             root_store_provider,
+            rest_client_slot: ClientSlot::new(disable_http_client_cache),
             xp_slot,
             governor: providers.governor.unwrap_or_else(process_governor),
         }
@@ -547,6 +568,19 @@ mod tests {
             roots.ptr_eq(driver.platform_detector.root_store_provider()),
             "platform detection uses the driver's root-store provider"
         );
+    }
+
+    #[test]
+    fn environment_variable_disables_the_rest_client_cache_only_without_an_override() {
+        let var = crate::env_vars::SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE;
+        temp_env::with_var(var, Some("true"), || {
+            assert!(http_client_cache_disabled(None));
+            assert!(!http_client_cache_disabled(Some(false)));
+        });
+        temp_env::with_var_unset(var, || {
+            assert!(!http_client_cache_disabled(None));
+            assert!(http_client_cache_disabled(Some(true)));
+        });
     }
 
     #[tokio::test]

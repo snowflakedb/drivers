@@ -21,12 +21,44 @@ struct CipherPolicy {
     tls13: Option<Vec<String>>,
 }
 
+/// The raw [`SNOWFLAKE_TLS_CIPHERS`] value one client build applies. `None`
+/// keeps the linked provider's suites. Parse errors surface when a provider
+/// is built from it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CipherSetting(Option<String>);
+
+impl CipherSetting {
+    pub(crate) fn from_env() -> Result<Self, TlsError> {
+        #[cfg(test)]
+        let _guard = test_env::test_read_lock();
+        Self::from_value(std::env::var_os(SNOWFLAKE_TLS_CIPHERS))
+    }
+
+    pub(crate) fn from_value(value: Option<std::ffi::OsString>) -> Result<Self, TlsError> {
+        match value.map(std::ffi::OsString::into_string) {
+            None => Ok(Self(None)),
+            Some(Ok(raw)) => Ok(Self(Some(raw))),
+            Some(Err(_)) => CipherPolicySnafu {
+                message: format!("{SNOWFLAKE_TLS_CIPHERS} is not valid Unicode"),
+            }
+            .fail(),
+        }
+    }
+}
+
 pub(crate) fn provider_for_versions(
     versions: &[&'static rustls::SupportedProtocolVersion],
     order: KeyShareOrder,
+    ciphers: &CipherSetting,
 ) -> Result<Arc<CryptoProvider>, TlsError> {
     let base = super::crypto_module::CryptoModule::get().provider_for(order);
-    let Some(policy) = read_policy()? else {
+    let Some(policy) = ciphers
+        .0
+        .as_deref()
+        .map(parse_policy)
+        .transpose()?
+        .flatten()
+    else {
         return Ok(base);
     };
     tracing::debug!(
@@ -37,19 +69,6 @@ pub(crate) fn provider_for_versions(
     let mut owned = (*base).clone();
     owned.cipher_suites = restrict(&base.cipher_suites, &policy, versions)?;
     Ok(Arc::new(owned))
-}
-
-fn read_policy() -> Result<Option<CipherPolicy>, TlsError> {
-    #[cfg(test)]
-    let _guard = test_env::test_read_lock();
-    match std::env::var(SNOWFLAKE_TLS_CIPHERS) {
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => CipherPolicySnafu {
-            message: format!("{SNOWFLAKE_TLS_CIPHERS} is not valid Unicode"),
-        }
-        .fail(),
-        Ok(raw) => parse_policy(&raw),
-    }
 }
 
 fn parse_policy(raw: &str) -> Result<Option<CipherPolicy>, TlsError> {
@@ -242,7 +261,7 @@ mod test_env {
             let previous = std::env::var_os(SNOWFLAKE_TLS_CIPHERS);
             match value {
                 // SAFETY: `ENV_LOCK` is held, and this variable is read only
-                // through `read_policy` while the guard is alive.
+                // through `CipherSetting::from_env` while the guard is alive.
                 Some(value) => unsafe { std::env::set_var(SNOWFLAKE_TLS_CIPHERS, value) },
                 None => unsafe { std::env::remove_var(SNOWFLAKE_TLS_CIPHERS) },
             }
@@ -281,7 +300,7 @@ mod tests {
     use rustls::CipherSuite;
     use rustls::crypto::CryptoProvider;
 
-    use super::{parse_policy, provider_for_versions, restrict};
+    use super::{CipherSetting, parse_policy, provider_for_versions, restrict};
     use crate::tls::crypto_module::CryptoModule;
     use crate::tls::error::TlsError;
 
@@ -473,22 +492,47 @@ mod tests {
     #[cfg(not(feature = "fips"))]
     #[test]
     fn unset_provider_still_offers_chacha() {
-        super::with_tls_ciphers_env(None, || {
-            let provider =
-                provider_for_versions(&protocol_window(true, true), KeyShareOrder::ClassicalFirst)
-                    .expect("default provider");
-            assert!(suite_ids(&provider).contains(&CipherSuite::TLS13_CHACHA20_POLY1305_SHA256));
-            assert!(Arc::ptr_eq(&provider, &CryptoModule::get().provider()));
-        });
+        let provider = provider_for_versions(
+            &protocol_window(true, true),
+            KeyShareOrder::ClassicalFirst,
+            &CipherSetting(None),
+        )
+        .expect("default provider");
+        assert!(suite_ids(&provider).contains(&CipherSuite::TLS13_CHACHA20_POLY1305_SHA256));
+        assert!(Arc::ptr_eq(&provider, &CryptoModule::get().provider()));
     }
 
     #[test]
-    fn the_environment_variable_reaches_the_provider() {
-        super::with_tls_ciphers_env(Some("NOT-A-CIPHER"), || {
-            let err =
-                provider_for_versions(&protocol_window(false, true), KeyShareOrder::ClassicalFirst)
-                    .expect_err("unknown name");
-            assert!(message(err).contains("does not recognize 'NOT-A-CIPHER'"));
+    fn the_setting_reaches_the_provider() {
+        let setting = CipherSetting(Some("NOT-A-CIPHER".to_string()));
+        let err = provider_for_versions(
+            &protocol_window(false, true),
+            KeyShareOrder::ClassicalFirst,
+            &setting,
+        )
+        .expect_err("unknown name");
+        assert!(message(err).contains("does not recognize 'NOT-A-CIPHER'"));
+    }
+
+    #[test]
+    fn from_env_reads_the_environment_variable() {
+        super::with_tls_ciphers_env(Some("TLS_AES_128_GCM_SHA256"), || {
+            assert!(
+                CipherSetting::from_env().expect("unicode")
+                    == CipherSetting(Some("TLS_AES_128_GCM_SHA256".to_string()))
+            );
         });
+        super::with_tls_ciphers_env(None, || {
+            assert!(CipherSetting::from_env().expect("unset") == CipherSetting(None));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_value_is_rejected() {
+        use std::os::unix::ffi::OsStringExt;
+        let err = CipherSetting::from_value(Some(std::ffi::OsString::from_vec(vec![0xff])))
+            .expect_err("not unicode");
+        assert!(message(err).contains("is not valid Unicode"));
     }
 }

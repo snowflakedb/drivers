@@ -526,17 +526,38 @@ impl DatabaseDriverV1 {
                 };
 
                 let connection_crl = self.crl_manager.connection_crl();
-                let (http_client, diag_rustls) =
-                    crate::tls::client::build_tls_client_and_rustls_config(
+                let (http_client, diag_rustls, rest_crl) = if effective_diag.is_some() {
+                    let (client, diag_rustls) =
+                        crate::tls::client::build_tls_client_and_rustls_config(
+                            &config.tls,
+                            Some(&config.proxy),
+                            connection_crl.clone(),
+                            self.root_store_provider.clone(),
+                            timeout_config.connect_timeout,
+                            true,
+                        )
+                        .await
+                        .context(TlsClientCreationSnafu)?;
+                    (client, diag_rustls, connection_crl.clone())
+                } else {
+                    let spec = crate::tls::client_spec::ClientSpec::resolve(
                         &config.tls,
                         Some(&config.proxy),
-                        connection_crl.clone(),
-                        self.root_store_provider.clone(),
                         timeout_config.connect_timeout,
-                        effective_diag.is_some(),
                     )
-                    .await
                     .context(TlsClientCreationSnafu)?;
+                    let (crl, roots) = (&connection_crl, &self.root_store_provider);
+                    let (client, rest_crl) = self
+                        .rest_client_slot
+                        .get_or_init(spec, crl, |spec| async move {
+                            crate::tls::client::build_rest_client(&spec, crl, roots, false)
+                                .await
+                                .map(|(client, _)| client)
+                        })
+                        .await
+                        .context(TlsClientCreationSnafu)?;
+                    (client, None, rest_crl)
+                };
 
                 let mut diag_runner = match (effective_diag, diag_rustls) {
                     (Some(diag_cfg), Some(diag_rustls)) => {
@@ -787,6 +808,7 @@ impl DatabaseDriverV1 {
 
                         if let Some(telemetry) = self.session_telemetry() {
                             connection_crl.flush_crl_stats(telemetry, telemetry_id);
+                            rest_crl.flush_crl_stats(telemetry, telemetry_id);
                         }
 
                         let env_info = conn

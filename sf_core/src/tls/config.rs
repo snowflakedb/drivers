@@ -7,7 +7,6 @@ use crate::config::param_names::{
 use crate::config::settings::{Setting, Settings};
 use crate::crl::config::CrlConfig;
 use crate::sensitive::SensitiveString;
-use crate::tls::crypto_module::KeyShareOrder;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -335,10 +334,6 @@ impl TlsConfig {
             versions: TlsVersions::default(),
             prefer_post_quantum: false,
         }
-    }
-
-    pub(crate) fn key_share_order(&self) -> KeyShareOrder {
-        KeyShareOrder::from_prefer_post_quantum(self.prefer_post_quantum)
     }
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {

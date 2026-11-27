@@ -5,6 +5,7 @@ mod gcs_retry;
 pub(crate) mod multipart_test_support;
 mod proxy_stream_transfer;
 mod proxy_transfer;
+mod rest_client_cache;
 mod retry;
 mod s3_cse_headers;
 mod s3_multipart;

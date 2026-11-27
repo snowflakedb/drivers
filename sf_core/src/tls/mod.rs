@@ -1,6 +1,8 @@
 pub mod aws_http_client;
 mod cipher_policy;
 pub mod client;
+pub(crate) mod client_slot;
+pub(crate) mod client_spec;
 pub mod config;
 pub mod crl_verifier;
 pub mod crypto_module;

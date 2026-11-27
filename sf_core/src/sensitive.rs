@@ -5,7 +5,7 @@ use zeroize::Zeroize;
 /// - Zeroization on drop (via `zeroize`)
 /// - Redacted `Debug`/`Display` output (`****`)
 /// - `Serialize`/`Deserialize` delegation to the inner type
-/// - `Clone`, `Default`
+/// - `Clone`, `Default`, `PartialEq`/`Eq` on the inner value
 ///
 /// Use `.reveal()` to access the underlying value.
 ///
@@ -35,6 +35,14 @@ impl<T: Zeroize + Clone> Clone for Sensitive<T> {
         Self(self.0.clone())
     }
 }
+
+impl<T: Zeroize + PartialEq> PartialEq for Sensitive<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<T: Zeroize + Eq> Eq for Sensitive<T> {}
 
 impl<T: Zeroize> std::fmt::Debug for Sensitive<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

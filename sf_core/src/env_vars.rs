@@ -48,6 +48,11 @@ pub const HOME: &str = "HOME";
 /// Only the literal `true`, case-insensitive, turns detection off.
 pub const SNOWFLAKE_DISABLE_PLATFORM_DETECTION: &str = "SNOWFLAKE_DISABLE_PLATFORM_DETECTION";
 
+/// When `true` (case-insensitive) or `1`, every connection builds a new REST
+/// HTTP client instead of reusing the driver's most recent one. Read once when
+/// the driver is created.
+pub const SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE: &str = "SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE";
+
 /// Per-detector platform-detection timeout in milliseconds.
 /// Used when the connection setting is unset.
 pub const SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS: &str = "SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS";

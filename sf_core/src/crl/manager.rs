@@ -82,7 +82,8 @@ impl CrlManager {
     }
 }
 
-/// The driver's [`CrlManager`] plus the `client_crl_stats` buffer for one connection.
+/// The driver's [`CrlManager`] plus a `client_crl_stats` buffer. Connections
+/// that share a client share the buffer of the connection that built it.
 ///
 /// [`Deref`] forwards cache and worker calls to the shared manager. Cloning keeps
 /// both the manager and this connection's buffer.

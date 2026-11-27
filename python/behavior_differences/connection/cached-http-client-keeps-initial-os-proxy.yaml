@@ -1,0 +1,23 @@
+name: "Reused REST HTTP client keeps the initial macOS/Windows OS system proxy"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  Each connection builds a new HTTP session, so changes to macOS System
+  Configuration or Windows Internet Options proxy settings during a running
+  process apply to later connections.
+new_driver_behavior: |
+  One driver instance reuses its most recent REST HTTP client across
+  connections with equal TLS, explicit-proxy, proxy-environment-variable, and
+  connect-timeout settings. When `use_proxy_env` is enabled (the Python
+  default) and proxy environment variables are unset, the macOS or Windows OS
+  system proxy is read when the client is first built and is not re-read on
+  reused connections. Changes to the OS system proxy take effect only when
+  another transport setting changes, the process restarts, or
+  `SNOWFLAKE_DISABLE_HTTP_CLIENT_CACHE=true` is set.
+description: |
+  Environment-variable proxy changes (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, and lowercase variants) still build a new client, and Linux is
+  unaffected because no OS proxy store is queried there.

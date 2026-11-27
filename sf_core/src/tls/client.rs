@@ -1,14 +1,16 @@
 use crate::crl::ConnectionCrl;
 use crate::crl::config::CertRevocationCheckMode;
 use crate::tls::CrlServerCertVerifier;
+use crate::tls::cipher_policy::CipherSetting;
+use crate::tls::client_spec::{ClientSpec, TlsSpec};
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::crypto_module::{KeyShareOrder, is_post_quantum};
 use crate::tls::error::{
-    ClientBuildSnafu, NativeRootLoadSnafu, PemParseSnafu, ProxyBuildSnafu, RedactedUrl,
-    RootStoreAddSnafu, RustlsConfigSnafu, TlsError, VerifierBuildSnafu,
+    ClientBuildSnafu, NativeRootLoadSnafu, PemParseSnafu, RootStoreAddSnafu, RustlsConfigSnafu,
+    TlsError, VerifierBuildSnafu,
 };
 use once_cell::sync::OnceCell;
-use reqwest::{Client, ClientBuilder, NoProxy, Proxy};
+use reqwest::{Client, ClientBuilder};
 use snafu::ResultExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +32,8 @@ struct PlatformRoots {
     with_bundled: OnceCell<Arc<rustls::RootCertStore>>,
 }
 
-enum RootCertificates {
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum RootCertificates {
     Default,
     Custom(Vec<u8>),
     Extra(Vec<u8>),
@@ -65,8 +68,18 @@ impl RootStoreProvider {
         tls_config: &TlsConfig,
         crl_cache_exists: bool,
     ) -> Result<RootStoreSnapshot<'_>, TlsError> {
+        self.prepare_native(needs_native_roots(
+            tls_config.verify_certificates,
+            tls_config.custom_root_store_path.is_some(),
+            &tls_config.crl_config.check_mode,
+            crl_cache_exists,
+        ))
+        .await
+    }
+
+    async fn prepare_native(&self, needed: bool) -> Result<RootStoreSnapshot<'_>, TlsError> {
         let snapshot = self.snapshot();
-        if !needs_native_roots(tls_config, crl_cache_exists) || self.0.roots.get().is_some() {
+        if !needed || self.0.roots.get().is_some() {
             return Ok(snapshot);
         }
         let provider = self.clone();
@@ -178,14 +191,18 @@ impl Default for RootStoreProvider {
     }
 }
 
-fn needs_native_roots(tls_config: &TlsConfig, crl_cache_exists: bool) -> bool {
+fn needs_native_roots(
+    verify_certificates: bool,
+    has_custom_roots: bool,
+    check_mode: &CertRevocationCheckMode,
+    crl_cache_exists: bool,
+) -> bool {
     let crl_download_needs_native_roots = !crl_cache_exists
         && matches!(
-            tls_config.crl_config.check_mode,
+            check_mode,
             CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory
         );
-    tls_config.verify_certificates
-        && (tls_config.custom_root_store_path.is_none() || crl_download_needs_native_roots)
+    verify_certificates && (!has_custom_roots || crl_download_needs_native_roots)
 }
 
 fn load_platform_roots(
@@ -279,10 +296,8 @@ pub(crate) async fn create_tls_client_with_proxy_prepared(
     crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<Client, TlsError> {
-    let snapshot = roots
-        .prepare_native_if_needed(&tls_config, crl_manager.has_cache())
-        .await?;
-    build_tls_client_and_rustls_config_sync(&tls_config, proxy, crl_manager, &snapshot, None, false)
+    build_tls_client_and_rustls_config(&tls_config, proxy, crl_manager, roots, None, false)
+        .await
         .map(|(c, _)| c)
 }
 
@@ -294,13 +309,6 @@ pub(crate) async fn create_tls_client_with_config_prepared(
     create_tls_client_with_proxy_prepared(tls_config, None, crl_manager, roots).await
 }
 
-/// Build a reqwest [`Client`] and, only when `need_diag_config` is set, its
-/// diagnostic [`rustls::ClientConfig`].
-///
-/// On the verified CRL-disabled path it clones the traffic config (no second
-/// trust-store load) but does not advertise h2: the diagnostic sends HTTP/1.0.
-/// On the CRL path it deliberately omits the revocation verifier so it can
-/// still show the chain when a CRL endpoint is unavailable.
 pub(crate) async fn build_tls_client_and_rustls_config(
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
@@ -309,17 +317,8 @@ pub(crate) async fn build_tls_client_and_rustls_config(
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
-    let snapshot = roots
-        .prepare_native_if_needed(tls_config, crl_manager.has_cache())
-        .await?;
-    build_tls_client_and_rustls_config_sync(
-        tls_config,
-        proxy,
-        crl_manager,
-        &snapshot,
-        connect_timeout,
-        need_diag_config,
-    )
+    let spec = ClientSpec::resolve(tls_config, proxy, connect_timeout)?;
+    build_rest_client(&spec, &crl_manager, &roots, need_diag_config).await
 }
 
 fn build_tls_client_and_rustls_config_sync(
@@ -330,93 +329,139 @@ fn build_tls_client_and_rustls_config_sync(
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
+    let spec = ClientSpec::resolve(tls_config, proxy, connect_timeout)?;
+    build_rest_client_from_snapshot(&spec, &crl_manager, roots, need_diag_config)
+}
+
+/// Build a REST [`Client`] from `spec` and, only when `need_diag_config` is
+/// set, its diagnostic [`rustls::ClientConfig`]. No driver setting outside
+/// `spec` is read; the driver-wide `roots` and `crl_manager` may load the
+/// native root store and open the CRL cache on first use.
+///
+/// On the verified CRL-disabled path the diagnostic clones the traffic config
+/// (no second trust-store load) but does not advertise h2: the diagnostic
+/// sends HTTP/1.0. On the CRL path it deliberately omits the revocation
+/// verifier so it can still show the chain when a CRL endpoint is unavailable.
+pub(crate) async fn build_rest_client(
+    spec: &ClientSpec,
+    crl_manager: &ConnectionCrl,
+    roots: &RootStoreProvider,
+    need_diag_config: bool,
+) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
+    let snapshot = roots
+        .prepare_native(needs_native_roots(
+            spec.tls.verify_certificates,
+            matches!(spec.tls.roots, RootCertificates::Custom(_)),
+            &spec.tls.crl.config().check_mode,
+            crl_manager.has_cache(),
+        ))
+        .await?;
+    build_rest_client_from_snapshot(spec, crl_manager, &snapshot, need_diag_config)
+}
+
+fn build_rest_client_from_snapshot(
+    spec: &ClientSpec,
+    crl_manager: &ConnectionCrl,
+    roots: &RootStoreSnapshot<'_>,
+    need_diag_config: bool,
+) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
+    let ClientSpec {
+        tls,
+        proxy,
+        connect_timeout,
+    } = spec;
+    let traffic = traffic_rustls_config(tls, crl_manager, roots, ClientAlpn::Default)?;
+    let diagnostic = need_diag_config
+        .then(|| diagnostic_rustls_config(tls, &traffic, roots))
+        .transpose()?;
+    let mut builder = proxy
+        .apply(apply_http_pool_settings(Client::builder()))?
+        .use_preconfigured_tls(traffic);
+    if let Some(ct) = connect_timeout {
+        builder = builder.connect_timeout(*ct);
+    }
+    let client = builder.build().context(ClientBuildSnafu)?;
+    Ok((client, diagnostic))
+}
+
+/// The rustls config a client built from `spec` sends traffic with. Explicit
+/// provider, roots, versions, and ALPN must be set before
+/// `.use_preconfigured_tls`: reqwest ignores TLS options subsequently set on
+/// its builder. FIPS builds reject insecure specs. Standard builds accept any
+/// certificate and handshake signature when verification is off, and apply
+/// the spec's cipher setting either way.
+fn traffic_rustls_config(
+    spec: &TlsSpec,
+    crl_manager: &ConnectionCrl,
+    roots: &RootStoreSnapshot<'_>,
+    alpn: ClientAlpn,
+) -> Result<rustls::ClientConfig, TlsError> {
     #[cfg(feature = "fips")]
-    if !tls_config.verify_certificates {
+    if !spec.verify_certificates {
         return crate::tls::error::InsecureTlsRejectedSnafu.fail();
     }
 
     // The global install covers any reqwest client that still has no
     // preconfigured config. Verified and insecure clients both carry an
-    // explicit config, so SNOWFLAKE_TLS_CIPHERS applies to either.
+    // explicit config, so the cipher setting applies to either.
     super::ensure_crypto_provider();
     super::require_fips_provider()?;
 
     #[cfg(not(feature = "fips"))]
-    if !tls_config.verify_certificates {
+    if !spec.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        let rustls_cfg = build_insecure_traffic_rustls_config(tls_config, ClientAlpn::Default)?;
-        let mut builder =
-            configure_http_client(Client::builder(), proxy)?.use_preconfigured_tls(rustls_cfg);
-        if let Some(ct) = connect_timeout {
-            builder = builder.connect_timeout(ct);
-        }
-        let client = builder.build().context(ClientBuildSnafu)?;
-        return Ok((
-            client,
-            need_diag_config
-                .then(|| build_insecure_rustls_config(tls_config))
-                .transpose()?,
-        ));
+        return build_insecure_traffic_rustls_config(spec, alpn);
     }
 
-    let root_certificates = load_root_certificates(tls_config)?;
-
-    match tls_config.crl_config.check_mode {
+    match spec.crl.config().check_mode {
         CertRevocationCheckMode::Disabled => {
-            if matches!(root_certificates, RootCertificates::Default) {
+            if matches!(spec.roots, RootCertificates::Default) {
                 tracing::debug!("CRL disabled, using native and bundled roots");
             }
-            let reqwest_rustls_cfg = build_verified_rustls_config(
-                roots.plain_store(&root_certificates)?,
-                tls_config,
-                ClientAlpn::Default,
-            )?;
-            let diag_rustls_cfg = need_diag_config.then(|| {
-                let mut diagnostic = reqwest_rustls_cfg.clone();
-                // inspect_tls writes HTTP/1.0; it must never negotiate h2.
-                diagnostic.alpn_protocols.clear();
-                Arc::new(diagnostic)
-            });
-            let mut builder = configure_http_client(Client::builder(), proxy)?
-                .use_preconfigured_tls(reqwest_rustls_cfg);
-            if let Some(ct) = connect_timeout {
-                builder = builder.connect_timeout(ct);
-            }
-            let client = builder.build().context(ClientBuildSnafu)?;
-            Ok((client, diag_rustls_cfg))
+            build_verified_rustls_config(roots.plain_store(&spec.roots)?, spec, alpn)
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!(
                 "CRL validation enabled, creating client with full TLS handshake validation"
             );
             // reqwest's min/max_tls_version are ignored on the
-            // preconfigured-rustls path, so the window must be baked into the
-            // rustls ClientConfig instead.
-            let root_store = roots.crl_store(&root_certificates)?;
-            let reqwest_rustls_cfg = build_crl_rustls_config(
-                tls_config,
-                root_store,
-                ClientAlpn::Default,
-                crl_manager,
+            // preconfigured-rustls path, so the version window is baked into
+            // the rustls ClientConfig instead.
+            build_crl_rustls_config(
+                spec,
+                roots.crl_store(&spec.roots)?,
+                alpn,
+                crl_manager.clone(),
                 roots,
-            )?;
-            let mut client_builder = configure_http_client(Client::builder(), proxy)?
-                .use_preconfigured_tls(reqwest_rustls_cfg);
-            if let Some(ct) = connect_timeout {
-                client_builder = client_builder.connect_timeout(ct);
-            }
-            let client = client_builder.build().context(ClientBuildSnafu)?;
-            // For the diagnostic, use a plain config (same root store, no CRL
-            // verifier) so inspect_tls can complete the TLS handshake and show
-            // the cert chain even when CRL endpoints are unreachable or slow —
-            // which is exactly when a user reaches for the diagnostic tool.
-            let diag_rustls_cfg = need_diag_config
-                .then(|| {
-                    build_plain_rustls_client_config(tls_config, roots, &root_certificates)
-                        .map(Arc::new)
-                })
-                .transpose()?;
-            Ok((client, diag_rustls_cfg))
+            )
+        }
+    }
+}
+
+fn diagnostic_rustls_config(
+    spec: &TlsSpec,
+    traffic: &rustls::ClientConfig,
+    roots: &RootStoreSnapshot<'_>,
+) -> Result<Arc<rustls::ClientConfig>, TlsError> {
+    if !spec.verify_certificates {
+        #[cfg(feature = "fips")]
+        return crate::tls::error::InsecureTlsRejectedSnafu.fail();
+        #[cfg(not(feature = "fips"))]
+        return build_insecure_rustls_config(spec);
+    }
+    match spec.crl.config().check_mode {
+        CertRevocationCheckMode::Disabled => {
+            let mut diagnostic = traffic.clone();
+            // inspect_tls writes HTTP/1.0; it must never negotiate h2.
+            diagnostic.alpn_protocols.clear();
+            Ok(Arc::new(diagnostic))
+        }
+        // For the diagnostic, use a plain config (same root store, no CRL
+        // verifier) so inspect_tls can complete the TLS handshake and show
+        // the cert chain even when CRL endpoints are unreachable or slow —
+        // which is exactly when a user reaches for the diagnostic tool.
+        CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
+            build_plain_rustls_client_config(spec, roots).map(Arc::new)
         }
     }
 }
@@ -476,11 +521,8 @@ impl ClientAlpn {
     }
 }
 
-/// Shared reqwest TLS policy for storage clients. Explicit provider, roots,
-/// versions, and ALPN must be set before `.use_preconfigured_tls`: reqwest
-/// ignores TLS options subsequently set on its builder. FIPS builds reject
-/// insecure configs. Standard builds accept any certificate and handshake
-/// signature, and apply `SNOWFLAKE_TLS_CIPHERS` on that config.
+/// Shared reqwest TLS and proxy policy for storage clients, resolved through
+/// the same [`ClientSpec`] translation as the REST client.
 fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
@@ -489,40 +531,13 @@ fn configure_tls_builder(
     roots: &RootStoreSnapshot<'_>,
     alpn: ClientAlpn,
 ) -> Result<ClientBuilder, TlsError> {
-    #[cfg(feature = "fips")]
-    if !tls_config.verify_certificates {
-        return crate::tls::error::InsecureTlsRejectedSnafu.fail();
-    }
-
-    super::ensure_crypto_provider();
-    super::require_fips_provider()?;
-    let builder = apply_proxy_to_builder(builder, proxy)?;
-    #[cfg(not(feature = "fips"))]
-    if !tls_config.verify_certificates {
-        tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        let rustls_cfg = build_insecure_traffic_rustls_config(tls_config, alpn)?;
-        return Ok(builder.use_preconfigured_tls(rustls_cfg));
-    }
-
-    let root_certificates = load_root_certificates(tls_config)?;
-
-    match tls_config.crl_config.check_mode {
-        CertRevocationCheckMode::Disabled => {
-            let rustls_cfg = build_verified_rustls_config(
-                roots.plain_store(&root_certificates)?,
-                tls_config,
-                alpn,
-            )?;
-            Ok(builder.use_preconfigured_tls(rustls_cfg))
-        }
-        CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
-            tracing::debug!("CRL validation enabled, configuring storage TLS client");
-            let root_store = roots.crl_store(&root_certificates)?;
-            let rustls_cfg =
-                build_crl_rustls_config(tls_config, root_store, alpn, crl_manager, roots)?;
-            Ok(builder.use_preconfigured_tls(rustls_cfg))
-        }
-    }
+    let ClientSpec {
+        tls,
+        proxy,
+        connect_timeout: _,
+    } = ClientSpec::resolve(tls_config, proxy, None)?;
+    let rustls_cfg = traffic_rustls_config(&tls, &crl_manager, roots, alpn)?;
+    Ok(proxy.apply(builder)?.use_preconfigured_tls(rustls_cfg))
 }
 
 /// Configure the Azure/GCS HTTP/1.1 storage transport plus `.no_gzip()`.
@@ -583,9 +598,13 @@ fn configure_storage_from_snapshot(
 // TODO(SNOW-4546333): derive provider, versions and resumption once for all rustls ClientConfig builders.
 fn handshake_provider(
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
 ) -> Result<Arc<rustls::crypto::CryptoProvider>, TlsError> {
-    super::cipher_policy::provider_for_versions(protocol_versions, tls_config.key_share_order())
+    super::cipher_policy::provider_for_versions(
+        protocol_versions,
+        spec.key_share_order,
+        &spec.ciphers,
+    )
 }
 
 /// rustls leads the next ClientHello to a host with the group that host chose
@@ -594,8 +613,8 @@ fn handshake_provider(
 /// HelloRetryRequest does not get a post-quantum-first ClientHello on the next
 /// connection.
 // TODO(SNOW-4546334): report handshakes where the server forces a post-quantum HelloRetryRequest.
-fn apply_key_share_order(config: &mut rustls::ClientConfig, tls_config: &TlsConfig) {
-    if tls_config.key_share_order() == KeyShareOrder::ClassicalFirst {
+fn apply_key_share_order(config: &mut rustls::ClientConfig, spec: &TlsSpec) {
+    if spec.key_share_order == KeyShareOrder::ClassicalFirst {
         config.resumption = rustls::client::Resumption::store(Arc::new(ClassicalKxHints(
             Arc::new(rustls::client::ClientSessionMemoryCache::new(256)),
         )));
@@ -658,31 +677,30 @@ impl rustls::client::ClientSessionStore for ClassicalKxHints {
     }
 }
 
-/// Build a rustls `ClientConfig` with CRL validation. Shared by
-/// [`configure_tls_builder`] (storage clients) and
-/// [`build_tls_client_and_rustls_config`] (connection-level client).
+/// Build a rustls `ClientConfig` with CRL validation for
+/// [`traffic_rustls_config`].
 fn build_crl_rustls_config(
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
     root_store: Arc<rustls::RootCertStore>,
     alpn: ClientAlpn,
     crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    if !tls_config.verify_hostname {
+    if !spec.verify_hostname {
         tracing::warn!("Hostname verification disabled (CRL path)");
     }
     // Reject an empty version window instead of silently restoring rustls's
     // defaults, which could re-enable a protocol the caller excluded.
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
-    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let protocol_versions = spec.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, spec)?;
     let version_builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?;
 
     let crl_verifier = CrlServerCertVerifier::new_with_root_store(
-        tls_config.crl_config.clone(),
+        spec.crl.config().clone(),
         root_store,
-        tls_config.verify_hostname,
+        spec.verify_hostname,
         crl_manager,
         roots,
     )
@@ -697,7 +715,7 @@ fn build_crl_rustls_config(
         .with_custom_certificate_verifier(Arc::new(crl_verifier))
         .with_no_client_auth();
     config.alpn_protocols = alpn.protocols();
-    apply_key_share_order(&mut config, tls_config);
+    apply_key_share_order(&mut config, spec);
     Ok(config)
 }
 
@@ -705,23 +723,22 @@ fn build_crl_rustls_config(
 /// the verified reqwest client, CRL verification currently uses native roots;
 /// keep its diagnostic on the same roots instead of the native ∪ webpki union.
 fn build_plain_rustls_client_config(
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
     roots: &RootStoreSnapshot<'_>,
-    root_certificates: &RootCertificates,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let root_store = match root_certificates {
+    let root_store = match &spec.roots {
         RootCertificates::Default => roots.native_store_lenient(),
         RootCertificates::Custom(pem) => Arc::new(create_root_store_from_pem(pem)?),
         RootCertificates::Extra(pem) => roots.with_native_and_pem(pem)?,
     };
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
-    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let protocol_versions = spec.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, spec)?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?
         .with_root_certificates(root_store)
         .with_no_client_auth();
-    apply_key_share_order(&mut config, tls_config);
+    apply_key_share_order(&mut config, spec);
     Ok(config)
 }
 
@@ -740,16 +757,20 @@ pub(crate) async fn default_verified_client_builder(
 pub(crate) fn default_verified_client_builder_from_snapshot(
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<ClientBuilder, TlsError> {
-    Ok(apply_http_pool_settings(Client::builder())
-        .use_preconfigured_tls(build_default_verified_rustls_config(roots)?))
+    Ok(
+        apply_http_pool_settings(Client::builder()).use_preconfigured_tls(
+            build_default_verified_rustls_config(roots, CipherSetting::from_env()?)?,
+        ),
+    )
 }
 
 fn build_default_verified_rustls_config(
     roots: &RootStoreSnapshot<'_>,
+    ciphers: CipherSetting,
 ) -> Result<rustls::ClientConfig, TlsError> {
     build_verified_rustls_config(
         roots.with_bundled()?,
-        &TlsConfig::default(),
+        &TlsSpec::resolve(&TlsConfig::default(), ciphers)?,
         ClientAlpn::Default,
     )
 }
@@ -759,11 +780,11 @@ fn build_default_verified_rustls_config(
 /// precedence; reqwest ignores builder TLS settings after use_preconfigured_tls.
 fn build_verified_rustls_config(
     root_store: Arc<rustls::RootCertStore>,
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
     alpn: ClientAlpn,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
-    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let protocol_versions = spec.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, spec)?;
     let supported_algs = provider.signature_verification_algorithms;
     // An empty version window can be constructed through TlsConfig's public
     // fields. Reqwest rejects it; silently using safe defaults would downgrade
@@ -771,7 +792,7 @@ fn build_verified_rustls_config(
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?;
-    let mut config = if tls_config.verify_hostname {
+    let mut config = if spec.verify_hostname {
         builder
             .with_root_certificates(root_store)
             .with_no_client_auth()
@@ -786,7 +807,7 @@ fn build_verified_rustls_config(
             .with_no_client_auth()
     };
     config.alpn_protocols = alpn.protocols();
-    apply_key_share_order(&mut config, tls_config);
+    apply_key_share_order(&mut config, spec);
     Ok(config)
 }
 
@@ -841,11 +862,11 @@ impl rustls::client::danger::ServerCertVerifier for IgnoreHostnameCertVerifier {
 
 #[cfg(not(feature = "fips"))]
 fn build_insecure_traffic_rustls_config(
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
     alpn: ClientAlpn,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
-    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let protocol_versions = spec.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, spec)?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?
@@ -853,7 +874,7 @@ fn build_insecure_traffic_rustls_config(
         .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
         .with_no_client_auth();
     config.alpn_protocols = alpn.protocols();
-    apply_key_share_order(&mut config, tls_config);
+    apply_key_share_order(&mut config, spec);
     Ok(config)
 }
 
@@ -927,18 +948,18 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
 /// false-negative TLS failures in environments with custom or self-signed CAs, which is
 /// exactly the case where users reach for `verify_certificates=false`.
 pub(crate) fn build_insecure_rustls_config(
-    tls_config: &TlsConfig,
+    spec: &TlsSpec,
 ) -> Result<Arc<rustls::ClientConfig>, TlsError> {
     super::ensure_crypto_provider();
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
-    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let protocol_versions = spec.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, spec)?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoVerifyCertVerifier::new()))
         .with_no_client_auth();
-    apply_key_share_order(&mut config, tls_config);
+    apply_key_share_order(&mut config, spec);
     Ok(Arc::new(config))
 }
 
@@ -1019,7 +1040,7 @@ pub fn create_root_store_from_pem(pem_data: &[u8]) -> Result<rustls::RootCertSto
     Ok(root_store)
 }
 
-fn load_root_certificates(tls_config: &TlsConfig) -> Result<RootCertificates, TlsError> {
+pub(crate) fn load_root_certificates(tls_config: &TlsConfig) -> Result<RootCertificates, TlsError> {
     if let Some(pem_path) = tls_config.custom_root_store_path.as_ref() {
         if let Some(extra_path) = tls_config.extra_root_store_path.as_ref() {
             tracing::warn!(
@@ -1092,74 +1113,10 @@ pub(crate) fn apply_http_pool_settings(builder: ClientBuilder) -> ClientBuilder 
         .tcp_keepalive(Some(Duration::from_secs(60)))
 }
 
-pub(crate) fn configure_http_client(
-    builder: ClientBuilder,
-    proxy: Option<&ProxyConfig>,
-) -> Result<ClientBuilder, TlsError> {
-    apply_proxy_to_builder(apply_http_pool_settings(builder), proxy)
-}
-
-/// Apply the driver's [`ProxyConfig`] to a reqwest [`ClientBuilder`].
-///
-/// Single source of truth for this translation — shared by the GS/REST
-/// client ([`configure_http_client`]) and the S3/GCS/Azure storage clients
-/// ([`configure_tls_builder`]).
-///
-/// Semantics:
-/// - `None` → the builder is returned unchanged, preserving reqwest's default
-///   `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env-var auto-detection. Tests/bins
-///   may still pass `None`.
-/// - explicit `host` → an all-schemes proxy is applied; reqwest's `.proxy()`
-///   call disables env auto-detection (matches JDBC/Go/Node precedence:
-///   connection params > env vars).
-/// - no `host`, `use_proxy_env = true`, not explicitly disabled → the builder
-///   is returned unchanged so env vars keep working (legacy POSIX behaviour).
-/// - otherwise → `.no_proxy()` suppresses reqwest's env auto-detection.
-pub(crate) fn apply_proxy_to_builder(
-    builder: ClientBuilder,
-    proxy: Option<&ProxyConfig>,
-) -> Result<ClientBuilder, TlsError> {
-    let Some(proxy) = proxy else {
-        return Ok(builder);
-    };
-    tracing::debug!(
-        host = ?proxy.host,
-        scheme = proxy.scheme.as_str(),
-        use_proxy_env = proxy.use_proxy_env,
-        explicitly_disabled = proxy.explicitly_disabled,
-        "proxy config"
-    );
-
-    if let Some(host) = proxy.host.as_deref().filter(|s| !s.is_empty()) {
-        // Explicit proxy → applied for all schemes; reqwest's `.proxy()` call
-        // disables auto env detection (matches JDBC/Go/Node precedence).
-        let url = build_proxy_url(host, proxy);
-        // `url` is the fully credentialed `{scheme}://user:pass@host` form;
-        // `RedactedUrl::new` strips credentials before the value can reach
-        // `ProxyBuild`'s `Debug`/`ErrorTrace` output.
-        let reqwest_proxy = Proxy::all(&url)
-            .context(ProxyBuildSnafu {
-                redacted_url: RedactedUrl::new(&url),
-            })?
-            .no_proxy(proxy.no_proxy.as_deref().and_then(NoProxy::from_string));
-        return Ok(builder.proxy(reqwest_proxy));
-    }
-
-    // No explicit proxy.  Either the customer asked us to honour env vars
-    // (legacy POSIX behaviour) or they explicitly disabled the proxy via the
-    // legacy ODBC `PROXY=""` + `AllowEmptyProxy=true` form.
-    if proxy.use_proxy_env && !proxy.explicitly_disabled {
-        tracing::warn!("Proxy configuration: using environment variable proxy settings");
-        Ok(builder)
-    } else {
-        Ok(builder.no_proxy())
-    }
-}
-
-/// Build a `{scheme}://[user:pass@]host[:port]` URL from a `ProxyConfig`.
+/// Build a `{scheme}://[user:pass@]host[:port]` proxy URL.
 /// Credentials are percent-encoded so values containing `:`, `@`, or `/`
 /// don't break URL parsing (a known footgun in the legacy Python connector).
-fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
+pub(crate) fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
     let scheme = proxy.scheme.as_str();
     let mut url = format!("{scheme}://");
     if let Some(user) = proxy.user.as_deref().filter(|s| !s.is_empty()) {
@@ -1189,10 +1146,17 @@ mod tests {
     use crate::crl::CrlManager;
     use crate::crl::config::CrlConfig;
     use crate::sensitive::SensitiveString;
+    use crate::tls::cipher_policy::with_tls_ciphers_env;
+    use crate::tls::client_spec;
+    use reqwest::Proxy;
     use std::io::Write;
 
     use rustls::NamedGroup;
     use rustls::pki_types::ServerName;
+
+    fn tls_spec(tls_config: &TlsConfig) -> TlsSpec {
+        TlsSpec::resolve(tls_config, CipherSetting::default()).expect("spec resolves")
+    }
 
     fn expected_groups(prefer_post_quantum: bool) -> Vec<NamedGroup> {
         let classical: &[NamedGroup] = if cfg!(feature = "fips") {
@@ -1345,7 +1309,7 @@ mod tests {
         Arc::new(
             build_verified_rustls_config(
                 Arc::clone(&server.roots),
-                tls_config,
+                &tls_spec(tls_config),
                 ClientAlpn::Default,
             )
             .expect("verified config"),
@@ -1383,18 +1347,21 @@ mod tests {
         let provider = RootStoreProvider::new();
         let snapshot = provider.snapshot();
         for prefer_post_quantum in [false, true] {
-            let tls_config =
-                post_quantum_config(prefer_post_quantum, CertRevocationCheckMode::Disabled, true);
+            let spec = tls_spec(&post_quantum_config(
+                prefer_post_quantum,
+                CertRevocationCheckMode::Disabled,
+                true,
+            ));
             let verified = build_verified_rustls_config(
                 Arc::new(rustls::RootCertStore::empty()),
-                &tls_config,
+                &spec,
                 ClientAlpn::Default,
             )
             .expect("verified config");
             assert_groups(&verified, prefer_post_quantum, "verified");
 
             let crl = build_crl_rustls_config(
-                &tls_config,
+                &spec,
                 snapshot
                     .crl_store(&RootCertificates::Default)
                     .expect("crl roots"),
@@ -1407,9 +1374,8 @@ mod tests {
 
             #[cfg(not(feature = "fips"))]
             {
-                let insecure =
-                    build_insecure_traffic_rustls_config(&tls_config, ClientAlpn::Default)
-                        .expect("insecure traffic config");
+                let insecure = build_insecure_traffic_rustls_config(&spec, ClientAlpn::Default)
+                    .expect("insecure traffic config");
                 assert_groups(&insecure, prefer_post_quantum, "insecure traffic");
             }
         }
@@ -1549,14 +1515,22 @@ mod tests {
     fn insecure_diagnostic_honors_the_version_window() {
         let server = test_server(&expected_groups(false), &[&rustls::version::TLS12]);
         let config = |tls_config: TlsConfig| {
-            build_insecure_rustls_config(&TlsConfig {
+            build_insecure_rustls_config(&tls_spec(&TlsConfig {
                 verify_certificates: false,
                 ..tls_config
-            })
+            }))
             .expect("insecure diagnostic config")
         };
         handshake(&config(TlsConfig::default()), &server).expect("default window");
         handshake(&config(tls13_only()), &server).expect_err("TLS 1.3-only window");
+    }
+
+    fn ciphers(allow_list: &str) -> CipherSetting {
+        CipherSetting::from_value(Some(allow_list.into())).expect("unicode allow-list")
+    }
+
+    fn configure_proxy(proxy: Option<&ProxyConfig>) -> Result<ClientBuilder, TlsError> {
+        crate::tls::client_spec::ProxySpec::resolve(proxy, &|_| None).apply(Client::builder())
     }
 
     fn proxy(
@@ -1586,9 +1560,8 @@ mod tests {
     #[test]
     fn plain_config_uses_the_module_provider() {
         let config = build_plain_rustls_client_config(
-            &TlsConfig::default(),
+            &tls_spec(&TlsConfig::default()),
             &RootStoreProvider::new().snapshot(),
-            &RootCertificates::Default,
         )
         .expect("plain rustls config");
         assert!(
@@ -1602,8 +1575,11 @@ mod tests {
 
     #[test]
     fn default_verified_config_uses_the_module_provider() {
-        let config = build_default_verified_rustls_config(&RootStoreProvider::new().snapshot())
-            .expect("default verified rustls config");
+        let config = build_default_verified_rustls_config(
+            &RootStoreProvider::new().snapshot(),
+            CipherSetting::default(),
+        )
+        .expect("default verified rustls config");
         assert!(Arc::ptr_eq(
             config.crypto_provider(),
             &crate::tls::crypto_module::CryptoModule::get().provider()
@@ -1614,8 +1590,8 @@ mod tests {
     /// The standard-build diagnostic must not inherit a host-installed provider.
     #[test]
     fn insecure_config_uses_the_module_provider() {
-        let config =
-            build_insecure_rustls_config(&TlsConfig::default()).expect("insecure rustls config");
+        let config = build_insecure_rustls_config(&tls_spec(&TlsConfig::default()))
+            .expect("insecure rustls config");
         assert!(
             Arc::ptr_eq(
                 config.crypto_provider(),
@@ -1630,9 +1606,8 @@ mod tests {
     #[test]
     fn version_window_does_not_change_the_provider() {
         let config = build_plain_rustls_client_config(
-            &tls13_only(),
+            &tls_spec(&tls13_only()),
             &RootStoreProvider::new().snapshot(),
-            &RootCertificates::Default,
         )
         .expect("versioned rustls config");
         assert!(
@@ -1646,20 +1621,18 @@ mod tests {
 
     #[test]
     fn verified_client_offers_only_the_named_tls13_suites() {
-        let config = crate::tls::cipher_policy::with_tls_ciphers_env(
-            Some("TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256"),
-            || {
-                build_verified_rustls_config(
-                    RootStoreProvider::new()
-                        .snapshot()
-                        .with_bundled()
-                        .expect("roots"),
-                    &tls13_only(),
-                    ClientAlpn::Default,
-                )
-                .expect("verified config")
+        let config = build_verified_rustls_config(
+            RootStoreProvider::new()
+                .snapshot()
+                .with_bundled()
+                .expect("roots"),
+            &TlsSpec {
+                ciphers: ciphers("TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256"),
+                ..tls_spec(&tls13_only())
             },
-        );
+            ClientAlpn::Default,
+        )
+        .expect("verified config");
         let suites: Vec<_> = config
             .crypto_provider()
             .cipher_suites
@@ -1678,20 +1651,23 @@ mod tests {
     #[cfg(not(feature = "fips"))]
     #[test]
     fn insecure_traffic_config_applies_the_cipher_allow_list() {
-        let (config, http1) = crate::tls::cipher_policy::with_tls_ciphers_env(
-            Some("TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256"),
-            || {
-                let config =
-                    build_insecure_traffic_rustls_config(&tls13_only(), ClientAlpn::Default)
-                        .expect("insecure traffic config");
-                let http1 = build_insecure_traffic_rustls_config(
-                    &TlsConfig::default(),
-                    ClientAlpn::Http1Only,
-                )
-                .expect("http1 insecure config");
-                (config, http1)
+        let allow_list = ciphers("TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256");
+        let config = build_insecure_traffic_rustls_config(
+            &TlsSpec {
+                ciphers: allow_list.clone(),
+                ..tls_spec(&tls13_only())
             },
-        );
+            ClientAlpn::Default,
+        )
+        .expect("insecure traffic config");
+        let http1 = build_insecure_traffic_rustls_config(
+            &TlsSpec {
+                ciphers: allow_list,
+                ..tls_spec(&TlsConfig::default())
+            },
+            ClientAlpn::Http1Only,
+        )
+        .expect("http1 insecure config");
         let suites: Vec<_> = config
             .crypto_provider()
             .cipher_suites
@@ -1907,26 +1883,33 @@ mod tests {
     }
 
     #[test]
+    fn rest_client_builds_from_the_spec_without_rereading_the_cipher_variable() {
+        let spec = client_spec::tests::spec(&TlsConfig::default(), None);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        with_tls_ciphers_env(Some("NOT_A_CIPHER"), || {
+            runtime
+                .block_on(build_rest_client(
+                    &spec,
+                    &crate::crl::CrlManager::new().connection_crl(),
+                    &RootStoreProvider::new(),
+                    false,
+                ))
+                .expect("client builds from the spec alone");
+        });
+    }
+
+    #[test]
     fn needs_native_roots_includes_crl_download_until_the_cache_exists() {
-        let custom = TlsConfig {
-            custom_root_store_path: Some(std::path::PathBuf::from("custom.pem")),
-            ..Default::default()
-        };
-        assert!(!needs_native_roots(&custom, false));
-
-        let mut crl_on = custom.clone();
-        crl_on.crl_config.check_mode = CertRevocationCheckMode::Enabled;
-        assert!(needs_native_roots(&crl_on, false));
-        assert!(!needs_native_roots(&crl_on, true));
-
-        crl_on.crl_config.check_mode = CertRevocationCheckMode::Advisory;
-        assert!(needs_native_roots(&crl_on, false));
-        assert!(!needs_native_roots(&crl_on, true));
-
-        crl_on.verify_certificates = false;
-        assert!(!needs_native_roots(&crl_on, false));
-
-        assert!(needs_native_roots(&TlsConfig::default(), true));
+        use CertRevocationCheckMode::{Advisory, Disabled, Enabled};
+        assert!(!needs_native_roots(true, true, &Disabled, false));
+        for crl_on in [Enabled, Advisory] {
+            assert!(needs_native_roots(true, true, &crl_on, false));
+            assert!(!needs_native_roots(true, true, &crl_on, true));
+            assert!(!needs_native_roots(false, true, &crl_on, false));
+        }
+        assert!(needs_native_roots(true, false, &Disabled, true));
     }
 
     static CUSTOM_CRL_NATIVE_LOADS: std::sync::atomic::AtomicUsize =
@@ -2287,50 +2270,50 @@ mod tests {
     }
 
     #[test]
-    fn configure_http_client_no_proxy_returns_builder_unchanged() {
+    fn proxy_spec_no_proxy_returns_builder_unchanged() {
         // When proxy is None, no error and reqwest's env-var detection
         // remains in effect (we don't assert env behavior here, only that
         // the call succeeds and returns a usable builder).
-        let builder = configure_http_client(Client::builder(), None).unwrap();
+        let builder = configure_proxy(None).unwrap();
         builder.build().expect("client must build");
     }
 
     #[test]
-    fn configure_http_client_empty_host_treated_as_none() {
+    fn proxy_spec_empty_host_treated_as_none() {
         let p = proxy(Some(""), Some(8080), None, None);
-        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let builder = configure_proxy(Some(&p)).unwrap();
         builder
             .build()
             .expect("empty-host proxy must be ignored, not fail");
     }
 
     #[test]
-    fn configure_http_client_with_explicit_proxy() {
+    fn proxy_spec_with_explicit_proxy() {
         let p = proxy(Some("p.example.com"), Some(8080), Some("u"), Some("p"));
-        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let builder = configure_proxy(Some(&p)).unwrap();
         builder
             .build()
             .expect("client with explicit proxy must build");
     }
 
     #[test]
-    fn configure_http_client_disables_env_when_use_proxy_env_false() {
+    fn proxy_spec_disables_env_when_use_proxy_env_false() {
         // Default ProxyConfig has use_proxy_env=false: the builder should
         // invoke `.no_proxy()` so reqwest does not auto-detect HTTP_PROXY.
         let p = ProxyConfig::default();
-        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let builder = configure_proxy(Some(&p)).unwrap();
         builder
             .build()
             .expect("default-deny env path must build cleanly");
     }
 
     #[test]
-    fn configure_http_client_allows_env_when_use_proxy_env_true() {
+    fn proxy_spec_allows_env_when_use_proxy_env_true() {
         let p = ProxyConfig {
             use_proxy_env: true,
             ..Default::default()
         };
-        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let builder = configure_proxy(Some(&p)).unwrap();
         builder.build().expect("env-fallback path must build");
     }
 
@@ -2341,12 +2324,12 @@ mod tests {
             use_proxy_env: true,
             ..Default::default()
         };
-        let _ = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let _ = configure_proxy(Some(&p)).unwrap();
         assert!(logs_contain("environment variable proxy settings"));
     }
 
     #[test]
-    fn configure_http_client_explicitly_disabled_overrides_env() {
+    fn proxy_spec_explicitly_disabled_overrides_env() {
         // Empty PROXY with allow_empty_proxy=true: customer says "no proxy"
         // even though use_proxy_env is true.
         let p = ProxyConfig {
@@ -2354,7 +2337,7 @@ mod tests {
             explicitly_disabled: true,
             ..Default::default()
         };
-        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        let builder = configure_proxy(Some(&p)).unwrap();
         builder
             .build()
             .expect("explicit disable must build cleanly");
@@ -2369,7 +2352,7 @@ mod tests {
         const PASSWORD: &str = "sup3r-s3cret-pw";
         let p = proxy(Some("bad<host"), Some(8080), Some("alice"), Some(PASSWORD));
 
-        let err = configure_http_client(Client::builder(), Some(&p))
+        let err = configure_proxy(Some(&p))
             .expect_err("malformed proxy host must fail proxy construction");
         assert!(
             matches!(err, TlsError::ProxyBuild { .. }),
