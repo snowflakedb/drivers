@@ -34,6 +34,16 @@ pub trait DownloadChunk: Send + Sync + Clone + 'static {
 
 pub trait ParseChunk: Send + Sync + Clone + 'static {
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError>;
+
+    /// Parses a downloaded chunk with its advertised row count. Formats that
+    /// require this validation override the default decode-only behavior.
+    fn parse_chunk_with_row_count(
+        &self,
+        data: Vec<u8>,
+        _expected_rows: i32,
+    ) -> Result<Vec<RecordBatch>, ArrowError> {
+        self.parse_chunk(data)
+    }
 }
 
 /// Channel message carrying all record batches from a single chunk.
@@ -288,13 +298,16 @@ async fn get_chunk(
         .acquire_owned()
         .await
         .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+    let expected_rows = data.row_count;
     let bytes = downloader.download_chunk(data).await?;
     drop(permit);
     // Arrow IPC / JSON→Arrow decode is CPU-bound; run it on the blocking pool so
     // it doesn't occupy this runtime worker (result chunks are routinely multi-MB).
-    let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
-        .await
-        .map_err(|e| ArrowError::ExternalError(Box::new(e)))??;
+    let batches = tokio::task::spawn_blocking(move || {
+        parser.parse_chunk_with_row_count(bytes, expected_rows)
+    })
+    .await
+    .map_err(|e| ArrowError::ExternalError(Box::new(e)))??;
     Ok(Chunk {
         batches: batches.into(),
         ticket,

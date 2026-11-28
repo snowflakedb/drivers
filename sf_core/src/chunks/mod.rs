@@ -269,6 +269,7 @@ async fn get_initial_chunk_reader(
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
+        let expected_rows = first.row_count;
         let transport = ChunkTransport::new(
             client.clone(),
             config.chunk_read_timeout,
@@ -290,10 +291,12 @@ async fn get_initial_chunk_reader(
                 let parser = JsonChunkParser {
                     row_types: row_types.to_vec(),
                 };
-                let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
-                    .await
-                    .context(SpawnBlockingSnafu)?
-                    .context(ChunkReadSnafu)?;
+                let batches = tokio::task::spawn_blocking(move || {
+                    parser.parse_chunk_with_row_count(bytes, expected_rows)
+                })
+                .await
+                .context(SpawnBlockingSnafu)?
+                .context(ChunkReadSnafu)?;
                 let schema = batches
                     .first()
                     .map(RecordBatch::schema)
@@ -1345,6 +1348,85 @@ mod tests {
             .expect("id column should be Int64");
         assert_eq!(ids.value(0), 1);
         assert_eq!(ids.value(1), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_rejects_initial_json_row_count_mismatch() {
+        let server = MockServer::start().await;
+        let json_body = br#"["1"],["2"]"#;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(json_body, "application/json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let chunks = vec![FetchChunkInput::Remote(ChunkDownloadData {
+            url: server.uri(),
+            row_count: 3,
+            uncompressed_size: json_body.len() as i64,
+            compressed_size: json_body.len() as i64,
+            headers: HashMap::new(),
+        })];
+
+        let result = fetch_chunks_reader(
+            chunks,
+            ChunkFormatKind::Json,
+            vec![RowType::fixed("id", false, 10, 0)],
+            &[false],
+            Client::new(),
+            &PrefetchConfig::default(),
+            None,
+        )
+        .await;
+        let Err(ChunkError::ChunkRead { source, .. }) = result else {
+            panic!("expected the initial JSON chunk row-count error");
+        };
+        assert_eq!(
+            source.to_string(),
+            "Invalid argument error: Malformed JSON chunk: expected 3 rows but got 2",
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_chunks_reader_rejects_prefetched_json_row_count_mismatch() {
+        let server = MockServer::start().await;
+        let json_body = br#"["1"],["2"]"#;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(json_body, "application/json"))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let chunks = [2, 3]
+            .into_iter()
+            .map(|row_count| {
+                FetchChunkInput::Remote(ChunkDownloadData {
+                    url: server.uri(),
+                    row_count,
+                    uncompressed_size: json_body.len() as i64,
+                    compressed_size: json_body.len() as i64,
+                    headers: HashMap::new(),
+                })
+            })
+            .collect();
+
+        let reader = fetch_chunks_reader(
+            chunks,
+            ChunkFormatKind::Json,
+            vec![RowType::fixed("id", false, 10, 0)],
+            &[false],
+            Client::new(),
+            &PrefetchConfig::default(),
+            None,
+        )
+        .await
+        .expect("the initial JSON chunk should match its row count");
+        let err =
+            tokio::task::spawn_blocking(move || reader.collect::<Result<Vec<_>, _>>().unwrap_err())
+                .await
+                .expect("spawn_blocking should join");
+        assert!(
+            err.to_string().contains("expected 3 rows but got 2"),
+            "unexpected prefetch error: {err}",
+        );
     }
 
     #[tokio::test]
