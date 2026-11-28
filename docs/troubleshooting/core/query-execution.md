@@ -51,9 +51,30 @@ parallel (up to `CLIENT_PREFETCH_THREADS`). Chunks are gzip-compressed
 
 | Setting | Default | Effect |
 |---|---|---|
-| `CLIENT_PREFETCH_THREADS` | 4 | Concurrent chunk downloads |
+| `CLIENT_PREFETCH_THREADS` | 4 | Concurrent chunk downloads; a statement-level override affects only that statement's readers and is client-only, never forwarded to GS |
 | `CLIENT_MEMORY_LIMIT` | 1536 (MB) | In-flight chunk memory budget; back-pressures prefetch when exceeded |
+| `CLIENT_RESULT_QUEUE_SIZE` | *unset* (no batch handoff limit) | Connection-, session-, or statement-level limit on decoded batches handed to a reader but not yet read; a chunk with more batches is delivered alone. Up to twice `CLIENT_PREFETCH_THREADS` further chunks may already be downloaded and decoded (bounded by `CLIENT_MEMORY_LIMIT`). Client-only, never forwarded to GS |
 | `MULTI_STATEMENT_COUNT` | *unset* (statement parameter) | Expected statement count for multi-statement |
+
+Prefetch settings resolve in this order (highest precedence first): statement
+overrides, server session values, post-connect session overrides, resolved
+connection settings, defaults. `CLIENT_RESULT_QUEUE_SIZE` is never echoed by the
+server, so its session overrides take precedence over connection settings.
+Explicit login `session_parameters` maps also honor the registry's forwarding
+flags: client-only values such as `CLIENT_RESULT_QUEUE_SIZE` and
+`CLIENT_MEMORY_LIMIT` are validated and stored as client settings, not sent to
+GS or copied into the server-session cache. `CLIENT_PREFETCH_THREADS` is still
+forwarded at login; only its statement override is client-only.
+Post-connect bulk session-parameter updates likewise validate client-only
+values and store them as session overrides, leaving the server-session cache
+for real or unknown server parameters. Later session-option writes can replace
+those client-only overrides.
+Query-ID reads reuse the prefetch snapshot captured by a statement override
+after applying the submission response's session parameters, including its
+memory limit, chunk read timeout, and chunk download retry policy. Each
+connection retains the 1024 most
+recently used snapshots; query IDs without a retained snapshot use the
+connection's current settings.
 
 ---
 
