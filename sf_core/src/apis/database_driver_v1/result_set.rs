@@ -566,34 +566,51 @@ fn inject_external_type_names(schema: SchemaRef, columns: &[ColumnMetadata]) -> 
     Arc::new(Schema::new_with_metadata(fields, schema.metadata().clone()))
 }
 
-/// Resolves `result_handle` and snapshots the inputs needed to lazily build a
-/// reader, then releases the per-result-set lock so the (possibly network-bound)
-/// build never holds the guard across an `.await`.
-async fn snapshot_reader_inputs(
-    driver: &DatabaseDriverV1,
-    result_handle: Handle,
-) -> Result<ReaderInputs, ApiError> {
-    let rs_ptr = driver
-        .results
-        .get_obj(result_handle)
-        .with_context(|| InvalidArgumentSnafu {
-            argument: "result_handle: ResultSet handle not found".to_string(),
-        })?;
+/// Snapshots the inputs needed to lazily build a reader, then releases the
+/// per-result-set lock so the (possibly network-bound) build never holds the
+/// guard across an `.await`.
+async fn snapshot_reader_inputs(rs_ptr: &Mutex<ResultSet>) -> ReaderInputs {
     let rs = rs_ptr.lock().await;
     let nullable_flags: Vec<bool> = rs.descriptor.columns.iter().map(|c| c.nullable).collect();
-    Ok(ReaderInputs {
+    ReaderInputs {
         data: rs.data.clone(),
         http_client: rs.reader_ctx.http_client.clone(),
         prefetch_config: rs.reader_ctx.prefetch_config.clone(),
         nullable_flags: Some(nullable_flags).filter(|f| !f.is_empty()),
         columns: rs.descriptor.columns.clone(),
         xp_backend: rs.reader_ctx.xp_backend.clone(),
-    })
+    }
 }
 
 // --- DatabaseDriverV1 impl ---
 
 impl DatabaseDriverV1 {
+    // Build a reader from a retained or atomically consumed result set.
+    async fn build_result_set_stream(
+        &self,
+        rs_ptr: Arc<Mutex<ResultSet>>,
+        inject_nullable: bool,
+    ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
+        let inputs = snapshot_reader_inputs(&rs_ptr).await;
+        let nullable_flags = inputs.nullable_flags.as_deref().filter(|_| inject_nullable);
+        let reader = build_reader_from_rowset_data(
+            inputs.data,
+            inputs.http_client,
+            &inputs.prefetch_config,
+            &self.wrapper_presets,
+            nullable_flags,
+            inputs.xp_backend,
+        )
+        .await
+        .context(QueryResponseProcessSnafu)?;
+        let original_schema = reader.schema();
+        let schema = inject_external_type_names(original_schema.clone(), &inputs.columns);
+        if Arc::ptr_eq(&schema, &original_schema) {
+            return Ok(reader);
+        }
+        Ok(override_reader_schema(reader, schema))
+    }
+
     /// Builds a fresh Arrow [`RecordBatchReader`] for this result set, lazily
     /// from the stored `RowsetData`, so it can be requested multiple times. The
     /// protobuf layer wraps it in an `FFI_ArrowArrayStream` at the C boundary.
@@ -638,24 +655,13 @@ impl DatabaseDriverV1 {
         result_handle: Handle,
         inject_nullable: bool,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
-        let inputs = snapshot_reader_inputs(self, result_handle).await?;
-        let nullable_flags = inputs.nullable_flags.as_deref().filter(|_| inject_nullable);
-        let reader = build_reader_from_rowset_data(
-            inputs.data,
-            inputs.http_client,
-            &inputs.prefetch_config,
-            &self.wrapper_presets,
-            nullable_flags,
-            inputs.xp_backend,
-        )
-        .await
-        .context(QueryResponseProcessSnafu)?;
-        let original_schema = reader.schema();
-        let schema = inject_external_type_names(original_schema.clone(), &inputs.columns);
-        if Arc::ptr_eq(&schema, &original_schema) {
-            return Ok(reader);
-        }
-        Ok(override_reader_schema(reader, schema))
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
+                argument: "result_handle: ResultSet handle not found".to_string(),
+            })?;
+        self.build_result_set_stream(rs_ptr, inject_nullable).await
     }
 
     /// Builds a fresh [`AsyncArrowBatchFetcher`] for this result set. Dropping
@@ -664,7 +670,13 @@ impl DatabaseDriverV1 {
         &self,
         result_handle: Handle,
     ) -> Result<AsyncArrowBatchFetcher, ApiError> {
-        let inputs = snapshot_reader_inputs(self, result_handle).await?;
+        let rs_ptr = self
+            .results
+            .get_obj(result_handle)
+            .with_context(|| InvalidArgumentSnafu {
+                argument: "result_handle: ResultSet handle not found".to_string(),
+            })?;
+        let inputs = snapshot_reader_inputs(&rs_ptr).await;
         let mut fetcher = build_async_stream(
             inputs.data,
             inputs.http_client,
@@ -677,6 +689,26 @@ impl DatabaseDriverV1 {
         let schema = inject_external_type_names(fetcher.schema(), &inputs.columns);
         fetcher.override_schema(schema);
         Ok(fetcher)
+    }
+
+    /// Atomically consumes a result-set handle and builds its Arrow stream.
+    ///
+    /// The handle is deregistered before stream construction, and remains
+    /// released whether construction succeeds or fails. Use this for one-shot
+    /// consumers to avoid pairing [`Self::result_set_get_stream`] with
+    /// [`Self::result_set_release`] and duplicating cleanup logic. As with
+    /// `result_set_get_stream`, drain chunked readers outside an async runtime.
+    pub async fn result_set_take_stream(
+        &self,
+        result_handle: Handle,
+    ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
+        let rs_ptr =
+            self.results
+                .take_obj(result_handle)
+                .with_context(|| InvalidArgumentSnafu {
+                    argument: "result_handle: ResultSet handle not found".to_string(),
+                })?;
+        self.build_result_set_stream(rs_ptr, true).await
     }
 
     /// Returns chunk metadata (inline data + remote chunk URLs) for this result set.
@@ -984,6 +1016,67 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    #[test]
+    fn result_set_take_stream_returns_reader_and_consumes_handle() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(JSON_ROWSET)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
+        };
+        let handle = driver.create_result_set(descriptor, data.into_rowset_data(), reader_ctx);
+
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+        let reader = runtime
+            .block_on(driver.result_set_take_stream(handle))
+            .expect("taking an inline JSON result stream should succeed");
+
+        assert!(
+            runtime
+                .block_on(driver.result_set_take_stream(handle))
+                .is_err(),
+            "a consumed handle must not be reusable"
+        );
+        assert!(
+            driver.result_set_release(handle).is_err(),
+            "a consumed handle must already be released"
+        );
+        assert_id_name_reader(reader);
+        drop(runtime);
+    }
+
+    #[test]
+    fn result_set_take_stream_consumes_handle_when_stream_build_fails() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
+        };
+        let malformed = RowsetData::ArrowSingleChunk {
+            chunk_base64: "not valid base64".to_string(),
+        };
+        let handle = driver.create_result_set(descriptor, malformed, reader_ctx);
+
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+        assert!(
+            runtime
+                .block_on(driver.result_set_take_stream(handle))
+                .is_err(),
+            "malformed Arrow data must fail stream construction"
+        );
+        assert!(
+            driver.result_set_release(handle).is_err(),
+            "the handle must remain released after construction fails"
+        );
     }
 
     #[test]
