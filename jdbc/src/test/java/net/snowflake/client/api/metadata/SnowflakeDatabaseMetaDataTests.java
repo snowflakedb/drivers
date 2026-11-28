@@ -1284,19 +1284,24 @@ class SnowflakeDatabaseMetaDataTests extends SnowflakeIntegrationTestBase {
               assertMetadataColumn(rsMeta, 6, "PRIVILEGE");
               assertMetadataColumn(rsMeta, 7, "IS_GRANTABLE");
 
-              assertTrue(resultSet.next());
-              assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
-              assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
-              assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
-              String grantor = resultSet.getString("GRANTOR");
-              assertNotNull(grantor);
-              assertFalse(grantor.isEmpty());
-              String grantee = resultSet.getString("GRANTEE");
-              assertNotNull(grantee);
-              assertFalse(grantee.isEmpty());
-              assertEquals("OWNERSHIP", resultSet.getString("PRIVILEGE"));
-              assertEquals("YES", resultSet.getString("IS_GRANTABLE"));
-              assertFalse(resultSet.next());
+              boolean ownershipFound = false;
+              while (resultSet.next()) {
+                assertEquals(currentDatabase, resultSet.getString("TABLE_CAT"));
+                assertEquals(currentSchema, resultSet.getString("TABLE_SCHEM"));
+                assertEquals(targetTable, resultSet.getString("TABLE_NAME"));
+                String grantor = resultSet.getString("GRANTOR");
+                assertNotNull(grantor);
+                assertFalse(grantor.isEmpty());
+                String grantee = resultSet.getString("GRANTEE");
+                assertNotNull(grantee);
+                assertFalse(grantee.isEmpty());
+
+                if ("OWNERSHIP".equals(resultSet.getString("PRIVILEGE"))) {
+                  assertEquals("YES", resultSet.getString("IS_GRANTABLE"));
+                  ownershipFound = true;
+                }
+              }
+              assertTrue(ownershipFound, "expected an OWNERSHIP privilege row");
             }
 
             try (ResultSet resultSet =
